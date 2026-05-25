@@ -10,12 +10,12 @@ public class GeneradorIntersecciones {
     private static final Random rand = new Random();
 
     static {
-        int filas = 7;
-        int columnas = 8;
+        int filas = 5;
+        int columnas = 5;
 
         for (int i = 0; i < filas; i++) {
             for (int j = 0; j < columnas; j++) {
-		char fila = (char) ('A' + i); //Se itera entre caracteres para seguir la forma INT(caracter)-(numero)
+		char fila = (char) ('A' + i); 
 		String id = fila + String.valueOf(j + 1);
 		intersecciones.add(id);
             }
