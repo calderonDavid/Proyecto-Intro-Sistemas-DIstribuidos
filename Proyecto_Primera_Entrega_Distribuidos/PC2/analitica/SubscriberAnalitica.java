@@ -87,22 +87,32 @@ public class SubscriberAnalitica {
                 }
 
                 try {
+			// HEALTH CHECK Y RECOVERY (Ajustado para verificar el puerto de la App)
+		        boolean pc3Responde = false;
+		        try (java.net.Socket socket = new java.net.Socket()) {
+		            // Intenta conectar específicamente al puerto TCP 5558 donde escucha el PC3
+		            socket.connect(new java.net.InetSocketAddress(IP_DB_PC3, 5558), 1000);
+		            pc3Responde = true;
+		        } catch (Exception e) {
+		            pc3Responde = false; // Si lanza excepción (Connection Refused), el PC3 está apagado
+		        }
 
-                    boolean pc3Responde = InetAddress.getByName(IP_DB_PC3).isReachable(1000);
+		        if (!pc3Responde) {
+		            if (!pc3EstabaCaido) {
+		                System.out.println("[SISTEMA] Pérdida de conexión con puerto 5558 del PC3. Entrando en Contingencia.");
+		            }
+		            pc3EstabaCaido = true; 
+		        } 
+		        else if (pc3EstabaCaido && pc3Responde) {
+		            System.out.println("[SISTEMA] Conexión con PC3 restaurada. Ejecutando protocolo Recovery...");
+		            
+		            // PC3 revivió: Iniciamos el hilo secundario para volcar la base de datos
+		            Thread hiloSincronizacion = new Thread(new SincronizadorBD(dbPushSocketPrincipal));
+		            hiloSincronizacion.start();
+		            
+		            pc3EstabaCaido = false; 
+		        }
 
-                    if (!pc3Responde) {
-                        if (!pc3EstabaCaido) {
-                            System.out.println("Pérdida de red con PC3.");
-                        }
-                        pc3EstabaCaido = true; 
-                    } 
-                    else if (pc3EstabaCaido && pc3Responde) {
-                        System.out.println("[SISTEMA] Red con PC3 restaurada. Ejecutando protocolo Recovery...");
-                        Thread hiloSincronizacion = new Thread(new SincronizadorBD(dbPushSocketPrincipal));
-                        hiloSincronizacion.start();
-                        
-                        pc3EstabaCaido = false; 
-                    }
                 } catch (Exception e) {
 
                 }
