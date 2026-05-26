@@ -14,73 +14,68 @@ import java.util.concurrent.TimeUnit;
 
 public class PublisherSensores {
 
-    // Cola concurrente segura para hilos. Limita la capacidad a 1000 para evitar OutOfMemory
-    private static final BlockingQueue<String[]> colaEventos = new LinkedBlockingQueue<>(1000);
+    private static final BlockingQueue<String[]> colaEventos = new LinkedBlockingQueue<>(2000);
 
     public static void main(String[] args) {
         
+        // Variables por defecto
+        boolean esMultihilo = true;
+        int escenario = 1;
+
+        // Lectura de parámetros al ejecutar en consola
+        if (args.length >= 2) {
+            esMultihilo = args[0].equalsIgnoreCase("multihilo");
+            escenario = Integer.parseInt(args[1]);
+        }
+
+        // Configuración exigida por la Tabla 1 del proyecto
+        int cantidadSensoresPorTipo = (escenario == 2) ? 2 : 1;
+        int intervaloSegundos = (escenario == 2) ? 5 : 10;
+        
+        // LA MAGIA DEL RENDIMIENTO: 10 hilos concurrentes vs 1 solo hilo cuello de botella
+        int cantidadHilos = esMultihilo ? 10 : 1; 
+
+        System.out.println("=== PRUEBA DE RENDIMIENTO INICIADA ===");
+        System.out.println("Arquitectura: " + (esMultihilo ? "MULTIHILO ("+cantidadHilos+" hilos)" : "SECUENCIAL (Single-Thread)"));
+        System.out.println("Carga: Escenario " + escenario + " (" + cantidadSensoresPorTipo + " sensor(es) por tipo cada " + intervaloSegundos + " seg)");
+        System.out.println("======================================\n");
+
         List<String> intersecciones = GeneradorIntersecciones.getTodas();
-        
         List<Sensor> todosLosSensores = new ArrayList<>();
-        
-        System.out.println("Posiciones de los sensores");
-        System.out.println("Total de intersecciones activas: " + intersecciones.size());
-	System.out.println("Intersecciones: " + intersecciones.toString());
 
         for (String inter : intersecciones) {
-            todosLosSensores.addAll(FabricaSensores.crearSensoresPorInterseccion(inter));}
+            todosLosSensores.addAll(FabricaSensores.crearSensoresPorInterseccion(inter, cantidadSensoresPorTipo));
+        }
 
-        //Iniciar el hilo Consumidor exclusivo para ZeroMQ
         Thread zmqPublisherThread = new Thread(PublisherSensores::publicarEventosZMQ);
         zmqPublisherThread.start();
 
-        //Pool de Hilos Productores
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(cantidadHilos);
 
-        System.out.println("Iniciando generación multihilo para " + todosLosSensores.size() + " sensores");
-
-        //asigna cada sensor como una tarea concurrente en el Pool
         for (Sensor sensor : todosLosSensores) {
-            
-            // Cámaras cada 10 seg, GPS y Espiras cada 5 seg.
-            
-            int intervalo = sensor.getTipo().equals("camara") ? 15 : 10;
-
             scheduler.scheduleAtFixedRate(() -> {
                 try {
-                    //Generar evento (hilo del pool)
                     String jsonEvento = sensor.generarEvento();
-                    
-                    //Encriptar
                     String eventoCifrado = CryptoUtils.encrypt(jsonEvento);
-                    
-                    // Colocar en la cola [Topico, Mensaje]
                     colaEventos.put(new String[]{"TRAFICO", eventoCifrado});
                     
-                    System.out.println("[HILO" + Thread.currentThread().getId() + "] Generado: " + sensor.getSensorId());
+                    System.out.println("[PC1] Evento generado -> " + sensor.getSensorId());
                 } catch (Exception e) {
                     System.err.println("Error en hilo generador: " + e.getMessage());
                 }
-            }, 0, intervalo, TimeUnit.SECONDS);
+            }, 0, intervaloSegundos, TimeUnit.SECONDS);
         }
     }
 
-    /*Hilo dedicado exclusivamente a leer la cola y publicar en ZeroMQ para mandarlo al PC2*/
-    
-    
     private static void publicarEventosZMQ() {
         try (ZContext context = new ZContext()) {
-        
             ZMQ.Socket publisher = context.createSocket(SocketType.PUB);
             publisher.bind("tcp://*:5555");
-            System.out.println("[ZMQ] Hilo Publisher iniciado en tcp://*:5555...");
 
             while (!Thread.currentThread().isInterrupted()) {
-                // .take() bloquea el hilo hasta que haya un elemento en la cola
                 String[] datos = colaEventos.take(); 
-                
-                publisher.sendMore(datos[0]); // Tópico (TRAFICO)
-                publisher.send(datos[1]);     // Mensaje Cifrado
+                publisher.sendMore(datos[0]); 
+                publisher.send(datos[1]);     
             }
         } catch (Exception e) {
             System.err.println("Error en hilo ZMQ: " + e.getMessage());
