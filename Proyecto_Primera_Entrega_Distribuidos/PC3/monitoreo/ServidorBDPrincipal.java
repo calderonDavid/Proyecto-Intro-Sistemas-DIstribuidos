@@ -75,16 +75,23 @@ public class ServidorBDPrincipal implements Runnable {
         try {
             // Consulta de Estado de Intersección (Puntual)
             if (consulta.startsWith("ESTADO_")) {
-                String idInterseccion = consulta.substring(7); // Remueve "ESTADO_"
+                String idInterseccion = consulta.substring(7); // Remueve "ESTADO_" -> "INT_C5" o "C5"
+                
+                // NORMALIZACIÓN CRÍTICA: Si el usuario escribió "INT_C5", le quitamos el "INT_" 
+                // para dejarlo como "C5", que es como realmente está guardado en MongoDB.
+                if (idInterseccion.startsWith("INT_")) {
+                    idInterseccion = idInterseccion.substring(4);
+                }
                 
                 Document ultimoSemaforo = colSemaforo.find(Filters.eq("interseccion", idInterseccion))
                         .sort(Sorts.descending("fecha")).first();
                 Document ultimoSensor = colEvento.find(Filters.eq("interseccion", idInterseccion))
                         .sort(Sorts.descending("timestamp")).first();
 
+                // Volvemos a colocar el prefijo estético solo para la impresión en pantalla
                 StringBuilder sb = new StringBuilder();
                 sb.append("\n============================================\n");
-                sb.append(" ESTADO ACTUAL: ").append(idInterseccion).append("\n");
+                sb.append(" ESTADO ACTUAL: INT_").append(idInterseccion).append("\n");
                 sb.append("============================================\n");
                 
                 if (ultimoSemaforo != null) {
@@ -116,6 +123,8 @@ public class ServidorBDPrincipal implements Runnable {
                 }
                 sb.append("============================================\n");
                 return sb.toString();
+
+            // ... (el resto del código de HISTORIAL_ permanece exactamente igual)
 
             // Consulta de Historial de Tráfico (Rango de tiempo)
             } else if (consulta.startsWith("HISTORIAL_")) {
