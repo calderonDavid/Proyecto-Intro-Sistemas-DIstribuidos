@@ -8,7 +8,7 @@ import java.util.Scanner;
 public class ConsolaMonitoreo {
     
     // IP del PC2 para enviar los comandos de la ambulancia
-    private static final String IP_PC2 = "10.43.98.173"; 
+    private static final String IP_PC2 = "10.43.99.141"; 
 
     public static void main(String[] args) {
     
