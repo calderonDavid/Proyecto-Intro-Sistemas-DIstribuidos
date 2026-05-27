@@ -124,8 +124,6 @@ public class ServidorBDPrincipal implements Runnable {
                 sb.append("============================================\n");
                 return sb.toString();
 
-            // ... (el resto del código de HISTORIAL_ permanece exactamente igual)
-
             // Consulta de Historial de Tráfico (Rango de tiempo)
             } else if (consulta.startsWith("HISTORIAL_")) {
                 String datos = consulta.substring(10);
@@ -161,6 +159,45 @@ public class ServidorBDPrincipal implements Runnable {
                            " Cambios de Semáforo ejecutados: " + totalCambios + "\n" +
                            " Olas Verdes (Emergencias) activadas: " + emergencias + "\n" +
                            "============================================\n";
+                }
+
+            // NUEVA CONSULTA: CÁLCULO DE THROUGHPUT EN 2 MINUTOS
+            } else if (consulta.startsWith("RENDIMIENTO_2MIN|")) {
+                String fechaInicioStr = consulta.split("\\|")[1];
+                
+                try {
+                    // 1. Convertir la fecha ingresada a formato manipulable
+                    java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                    java.time.LocalDateTime startLocal = java.time.LocalDateTime.parse(fechaInicioStr, formatter);
+                    
+                    // 2. Sumar exactamente 2 minutos de forma matemática
+                    java.time.LocalDateTime endLocal = startLocal.plusMinutes(2);
+                    
+                    // 3. Convertir a Date nativo para que MongoDB genere ObjectIDs
+                    java.util.Date startDate = java.util.Date.from(startLocal.atZone(java.time.ZoneId.systemDefault()).toInstant());
+                    java.util.Date endDate = java.util.Date.from(endLocal.atZone(java.time.ZoneId.systemDefault()).toInstant());
+                    
+                    // 4. Crear los ObjectIds límite (buscamos por fecha de inserción)
+                    org.bson.types.ObjectId startId = new org.bson.types.ObjectId(startDate);
+                    org.bson.types.ObjectId endId = new org.bson.types.ObjectId(endDate);
+                    
+                    // 5. Filtro entre el rango
+                    com.mongodb.client.model.Bson filter = Filters.and(
+                        Filters.gte("_id", startId), 
+                        Filters.lte("_id", endId)
+                    );
+                    
+                    long countSensores = colEvento.countDocuments(filter);
+                    long countSemaforos = colSemaforo.countDocuments(filter);
+                    long totalOperaciones = countSensores + countSemaforos;
+                    
+                    return "\n Ventana analizada: " + startLocal + " HASTA " + endLocal + "\n" +
+                           " - Eventos de Sensores guardados: " + countSensores + "\n" +
+                           " - Cambios de Semáforo guardados: " + countSemaforos + "\n" +
+                           " -> THROUGHPUT TOTAL: " + totalOperaciones + " operaciones persistidas en BD.";
+                                       
+                } catch (Exception e) {
+                    return "Error calculando rendimiento. Verifica que usaste el formato yyyy-MM-dd HH:mm:ss. Detalle: " + e.getMessage();
                 }
             }
             return "Consulta no reconocida o formato inválido.";
