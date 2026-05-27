@@ -57,7 +57,8 @@ public class ConsolaMonitoreo {
                     System.out.println("\n=== PANEL DE MANDO (PC3) ===");
                     System.out.println("1. Priorizar Ambulancia (Ola Verde)");
                     System.out.println("2. Realizar consulta a la Base de Datos");
-                    System.out.println("3. Salir");
+                    System.out.println("3. Medir Rendimiento de Ingesta (2 minutos)");
+                    System.out.println("4. Salir");
                     System.out.print("Opción: ");
                     
                     String opcion = scanner.nextLine();
@@ -113,6 +114,25 @@ public class ConsolaMonitoreo {
                         }
                         
                     } else if (opcion.equals("3")) {
+                        
+                        // NUEVA SECCIÓN DE RENDIMIENTO AUTOMÁTICO
+                        System.out.println("\n=== PRUEBA DE RENDIMIENTO (2 MINUTOS) ===");
+                        System.out.println("Ingrese la fecha y hora exacta de INICIO de la prueba.");
+                        System.out.println("Formato estricto (AÑO-MES-DIA HORA:MINUTO:SEGUNDO) -> Ej: 2026-05-27 18:00:00");
+                        System.out.print("Fecha inicio: ");
+                        String fechaInicioRendimiento = scanner.nextLine();
+
+                        // Enviamos el comando especial al servidor BD
+                        String requestRendimiento = "RENDIMIENTO_2MIN|" + fechaInicioRendimiento;
+                        reqDB.send(requestRendimiento);
+
+                        // Esperamos la respuesta automatizada
+                        String replyRendimiento = reqDB.recvStr();
+                        System.out.println("\n>> RESULTADOS DEL EXPERIMENTO:");
+                        System.out.println(replyRendimiento != null ? replyRendimiento : "[ERROR] El motor de BD no respondió.");
+                        System.out.println("-----------------------------------------\n");
+
+                    } else if (opcion.equals("4")) {
                         System.out.println("Cerrando sesión y apagando consola PC3...");
                         System.exit(0);
                     } else {
