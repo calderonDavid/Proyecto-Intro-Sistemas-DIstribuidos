@@ -65,14 +65,10 @@ public class SubscriberAnalitica {
 
                         if (rawMessage != null) {
                             try {
-				long inicioProcesamiento = System.currentTimeMillis(); // INICIO MEDICIÓN EVENTO
 				
 				String decrypted = CryptoUtils.decrypt(new String(rawMessage));
 				AnalizadorEventos.procesar(decrypted);
 				
-				long finProcesamiento = System.currentTimeMillis(); // FIN MEDICIÓN EVENTO
-				System.out.println("[MÉTRICA LATENCIA] Evento procesado y persistido en BD en: " + (finProcesamiento - inicioProcesamiento) + " ms");
-			    } catch (Exception e) {
 				System.err.println("Error procesando evento: " + e.getMessage());
 			    }
                         }
@@ -86,21 +82,18 @@ public class SubscriberAnalitica {
                     System.out.println("[PC2] Comando manual recibido desde PC3: " + comando);
 
                     if (comando.startsWith("AMBULANCIA_")) {
-			    long inicioOlaVerde = System.currentTimeMillis(); // INICIO MEDICIÓN OLA VERDE
-
+			    
 			    String eje = comando.split("_")[1]; 
 			    
 			    java.util.List<String> logsEmergencia = Ciudad.activarOlaVerde(eje);
 
 			    for (String log : logsEmergencia) {
-				dbPushSocketLocal.send(log, ZMQ.DONTWAIT);
-				dbPushSocketPrincipal.send(log, ZMQ.DONTWAIT);
+					dbPushSocketLocal.send(log, ZMQ.DONTWAIT);
+					dbPushSocketPrincipal.send(log, ZMQ.DONTWAIT);
 			    }
 			    
 			    responderPC3.send("ÉXITO: Ola Verde activada en el eje " + eje);
 			    
-			    long finOlaVerde = System.currentTimeMillis(); // FIN MEDICIÓN OLA VERDE
-			    System.out.println("[MÉTRICA LATENCIA] Ola Verde aplicada y confirmada en: " + (finOlaVerde - inicioOlaVerde) + " ms");
 			} else {
 			    responderPC3.send("ERROR: Comando no reconocido");
 			}
