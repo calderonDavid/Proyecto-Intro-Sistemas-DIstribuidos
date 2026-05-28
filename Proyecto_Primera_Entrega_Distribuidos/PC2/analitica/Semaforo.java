@@ -1,55 +1,98 @@
 package analitica;
 
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import org.bson.Document;
-import org.zeromq.SocketType;
-import org.zeromq.ZContext;
-import org.zeromq.ZMQ;
+import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 
-public class DBHandler implements Runnable {
-    // Parámetros de conexión a la base local
-    private static final String MONGO_URI = "mongodb://localhost:27017";
-    private static final String DATABASE_NAME = "bd_trafico_replica";
+public class Semaforo {
+    // Atributos de estado del semáforo
+    private String interseccion;
+    private boolean esHorizontal; 
+    private String estado; 
+    private ZonedDateTime ultimoCambio; 
+    private long tiempoBloqueo;
 
-    @Override
-    public void run() {
-        try (MongoClient mongoClient = MongoClients.create(MONGO_URI);
-             ZContext context = new ZContext()) {
+    // Tiempos parametrizados para operaciones normales o con tráfico
+    private static final long TIEMPO_NORMAL = 15000;
+    private static final long TIEMPO_CONGESTION = 30000;
 
-            MongoDatabase database = mongoClient.getDatabase(DATABASE_NAME);
-            MongoCollection<Document> colSensores = database.getCollection("historico_sensores");
-            MongoCollection<Document> colSemaforos = database.getCollection("historico_semaforos");
+    public Semaforo(String interseccion, boolean esHorizontal, String estadoInicial) {
+        this.interseccion = interseccion;
+        this.esHorizontal = esHorizontal;
+        this.estado = estadoInicial;
+        this.ultimoCambio = ZonedDateTime.now(ZoneId.of("America/Bogota"));
+        this.tiempoBloqueo = TIEMPO_NORMAL;
+    }
+    
+    // Método sincronizado para asegurar la consistencia al alterar el color de un semáforo de forma concurrente
+    public synchronized boolean aplicarRegla(boolean hayCongestion, String direccionCongestionada, Semaforo semaforoCompanero) {
+        ZonedDateTime ahora = ZonedDateTime.now(ZoneId.of("America/Bogota"));
+        long tiempoTranscurrido = Duration.between(ultimoCambio, ahora).toMillis();
 
-            // Socket PULL dedicado para recibir lo que le envían internamente desde la clase Subscriber
-            ZMQ.Socket pullSocket = context.createSocket(SocketType.PULL);
-            pullSocket.bind("tcp://*:5556"); 
-
-            System.out.println("[BD REPLICA] Persistencia iniciada en MongoDB local...");
-
-            // Bucle infinito escuchando datos para insertar en la BD
-            while (!Thread.currentThread().isInterrupted()) {
-                String jsonRecibido = pullSocket.recvStr();
-                if (jsonRecibido != null) {
-                    try {
-                        // Parseamos el JSON a formato BSON para poder guardarlo en Mongo
-                        Document doc = Document.parse(jsonRecibido);
-                        
-                        // Determinamos a qué colección va la data dependiendo de sus campos
-                        if (doc.containsKey("tipo_sensor")) {
-                            colSensores.insertOne(doc);
-                        } else if (doc.containsKey("estado_nuevo")) {
-                            colSemaforos.insertOne(doc);
-                        }
-                    } catch (Exception e) {
-                        System.err.println("Error BSON: " + e.getMessage());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Error MongoDB: " + e.getMessage());
+        // Control para evitar cambios demasiado rápidos, respeta el tiempo mínimo de bloqueo
+        if (tiempoTranscurrido < tiempoBloqueo) {
+            return false; 
         }
+
+        boolean eventoEsHorizontal = direccionCongestionada.equals("R");
+        String nuevoEstadoPropio;
+        String nuevoEstadoCompanero;
+
+        // Lógica para asignar verde al sentido congestionado y penalizar al otro
+        if (hayCongestion) {
+            if (eventoEsHorizontal) {
+                nuevoEstadoPropio = this.esHorizontal ? "VERDE" : "ROJO";
+                nuevoEstadoCompanero = this.esHorizontal ? "ROJO" : "VERDE";
+            } else {
+                nuevoEstadoPropio = this.esHorizontal ? "ROJO" : "VERDE";
+                nuevoEstadoCompanero = this.esHorizontal ? "VERDE" : "ROJO";
+            }
+            this.tiempoBloqueo = TIEMPO_CONGESTION; // Se da más tiempo para descongestionar
+        } else {
+            // Ciclo normal de cambio de color
+            nuevoEstadoPropio = this.estado.equals("VERDE") ? "ROJO" : "VERDE";
+            nuevoEstadoCompanero = this.estado.equals("VERDE") ? "VERDE" : "ROJO";
+            this.tiempoBloqueo = TIEMPO_NORMAL;
+        }
+
+        // Si realmente hubo un cambio de estado, lo aplicamos en memoria y reportamos
+        if (!this.estado.equals(nuevoEstadoPropio)) {
+            this.estado = nuevoEstadoPropio;
+            this.ultimoCambio = ahora;
+            
+            semaforoCompanero.forzarCambio(nuevoEstadoCompanero, ahora, this.tiempoBloqueo);
+            
+            String logMsg = hayCongestion ? "(Congestion detectada -> Tiempo extendido a 30s)" : "(Alternancia Normal -> Tiempo fijado a 15s)";
+            System.out.println("[CONTROL] Semáforos en " + interseccion + " cambian. H=" 
+                + (this.esHorizontal ? this.estado : semaforoCompanero.getEstado()) 
+                + " V=" + (!this.esHorizontal ? this.estado : semaforoCompanero.getEstado()) 
+                + " " + logMsg);
+            
+            return true;
+        }
+        
+        // Si no se cambió el estado, simplemente actualizamos la marca de tiempo
+        this.ultimoCambio = ahora;
+        semaforoCompanero.forzarCambio(semaforoCompanero.getEstado(), ahora, this.tiempoBloqueo);
+        return false;
+    }
+
+    // Permite cambios abruptos, especialmente útil para emergencias como la Ola Verde
+    public synchronized void forzarCambio(String nuevoEstado, ZonedDateTime tiempo, long nuevoTiempoBloqueo) {
+        this.estado = nuevoEstado;
+        this.ultimoCambio = tiempo;
+        this.tiempoBloqueo = nuevoTiempoBloqueo;
+    }
+
+    public String getEstado() {
+        return estado;
+    }
+    
+    public boolean isEsHorizontal() {
+        return esHorizontal;
+    }
+    
+    public ZonedDateTime getUltimoCambio() {
+        return ultimoCambio;
     }
 }
