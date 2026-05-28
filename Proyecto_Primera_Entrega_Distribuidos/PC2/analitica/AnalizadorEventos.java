@@ -8,28 +8,33 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class AnalizadorEventos {
 
+    // Sockets para enviar logs a las bases de datos
     private static ZMQ.Socket dbLocal;
     private static ZMQ.Socket dbPrincipal;
 
+    // Memoria temporal segura para hilos que guarda cómo está el tráfico por intersección y dirección
     private static final ConcurrentHashMap<String, MetricasTrafico> estadoTrafico = new ConcurrentHashMap<>();
+    
     public static void inicializar(ZMQ.Socket pushLocal, ZMQ.Socket pushPrincipal) {
         dbLocal = pushLocal;
         dbPrincipal = pushPrincipal;
     }
 
     public static void procesar(String json) {
-
+        // Todo dato que entra se guarda directamente en BD
         guardarEnBD(json);
 
+        // Extracción manual de los valores del JSON sin usar librerías externas pesadas
         String interseccion = extraerValorString(json, "interseccion");
         String direccion = extraerValorString(json, "direccion");
         String tipo = extraerValorString(json, "tipo_sensor");
         
+        // Creamos una llave única para saber exactamente de qué calle estamos hablando
         String claveEstado = interseccion + "-" + direccion;
         estadoTrafico.putIfAbsent(claveEstado, new MetricasTrafico());
         MetricasTrafico metricas = estadoTrafico.get(claveEstado);
         
-
+        // Actualizamos la métrica correcta dependiendo de qué tipo de sensor envió el dato
         if (tipo.equals("camara")) {
             metricas.Q = extraerValorInt(json, "volumen"); 
         } else if (tipo.equals("espira_inductiva")) {
@@ -41,6 +46,7 @@ public class AnalizadorEventos {
      
         boolean hayCongestion = false;
 
+        // Reglas de negocio para determinar si hay un trancón cruzando las distintas variables
         if (metricas.Q >= 15 && metricas.Vp <= 15) {
             hayCongestion = true;
         }
@@ -51,13 +57,14 @@ public class AnalizadorEventos {
             hayCongestion = true;
         }
 
+        // Le pasamos el resultado a la Ciudad para que decida si debe cambiar el semáforo
         boolean cambioRealizado = Ciudad.procesarReglaInterseccion(interseccion, hayCongestion, direccion);
         
+        // Si el semáforo cambió de color, armamos el log y lo disparamos a las bases de datos
         if (cambioRealizado) {
             String razon = hayCongestion ? "Congestion detectada" : "Alternancia Normal";
             String fechaLocal = ZonedDateTime.now(ZoneId.of("America/Bogota")).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
 
-            // USAMOS EL MÉTODO EN PLURAL PARA OBTENER EL ARREGLO
             Semaforo[] par = Ciudad.obtenerSemaforos(interseccion);
 
             String logSemaforo = String.format(
@@ -67,12 +74,12 @@ public class AnalizadorEventos {
             
             guardarEnBD(logSemaforo);
         }
-    } // <-- Aquí termina tu método procesar
+    } 
     
-    
+    // Método auxiliar para enviar el dato a ambas bases de datos asegurando que no bloquee el sistema (DONTWAIT)
     private static void guardarEnBD(String json) {
         if (dbPrincipal != null && dbLocal != null) {
-            boolean enviadoPC3 = dbPrincipal.send(json, ZMQ.DONTWAIT); // Envío no bloqueante
+            boolean enviadoPC3 = dbPrincipal.send(json, ZMQ.DONTWAIT); 
             
             if (!enviadoPC3) {
                 System.out.println("[ALERTA] Timeout en BD Principal (PC3), operando con BD Réplica.");
@@ -81,6 +88,7 @@ public class AnalizadorEventos {
         }
     }
 
+    // Métodos auxiliares para parsear el JSON como texto plano
     private static String extraerValorString(String json, String clave) {
         String patron = "\"" + clave + "\": \"";
         int inicio = json.indexOf(patron);
@@ -103,8 +111,7 @@ public class AnalizadorEventos {
             return 0;
         }
     }
-
-
+    // Clase interna para llevar los conteos agrupados
     private static class MetricasTrafico {
         int Q = 0;   
         int V = 0;   
