@@ -29,13 +29,13 @@ public class SincronizadorBD implements Runnable {
         try (ZContext context = new ZContext();
              MongoClient mongoClient = MongoClients.create("mongodb://localhost:27017")) {
             
+            // Socket exclusivo para volcar los datos de recuperación
             ZMQ.Socket recoverySocket = context.createSocket(SocketType.PUSH);
-            // 1. TIMEOUT: Si PC3 se desconecta, esperará 2 segundos y cancelará el envío limpiamente
-            recoverySocket.setSendTimeOut(2000);
-            // 2. LINGER: Le da 2 segundos a ZMQ para vaciar la memoria antes de cerrar el hilo
-            recoverySocket.setLinger(2000); 
+            recoverySocket.setSendTimeOut(2000); // Previene bloqueos si la red es intermitente
+            recoverySocket.setLinger(2000);      // Tiempo de gracia para vaciar la memoria antes de cerrar
             recoverySocket.connect("tcp://" + ipPC3 + ":5558");
             
+            // Conexión a las colecciones locales
             MongoDatabase database = mongoClient.getDatabase("bd_trafico_replica");
             MongoCollection<Document> colSemaforos = database.getCollection("historico_semaforos");
             MongoCollection<Document> colSensores = database.getCollection("historico_sensores");
@@ -50,9 +50,10 @@ public class SincronizadorBD implements Runnable {
         }
     }
 
+    // Método que busca los datos pendientes y los envía al nodo principal
     private void sincronizarColeccion(MongoCollection<Document> coleccion, String nombre, ZMQ.Socket recoverySocket) {
+        // Solo buscamos documentos que no han sido sincronizados aún
         Document query = new Document("sincronizado", false);
-        // Lista para guardar los IDs y hacer actualizaciones masivas
         List<ObjectId> loteActualizacion = new ArrayList<>();
         
         try (MongoCursor<Document> cursor = coleccion.find(query).iterator()) {
@@ -61,12 +62,11 @@ public class SincronizadorBD implements Runnable {
                 Document doc = cursor.next();
                 ObjectId idLocal = doc.getObjectId("_id");
                 
+                // Limpiamos los campos internos antes de mandarlo por la red
                 doc.remove("_id");
                 doc.remove("sincronizado");
                 
                 String json = doc.toJson();
-                
-                // Usamos send normal (bloqueante hasta el límite del TimeOut de 2 segs)
                 boolean enviado = recoverySocket.send(json);
                 
                 if (enviado) {
@@ -74,23 +74,19 @@ public class SincronizadorBD implements Runnable {
                     count++;
                 } else {
                     System.out.println("[RECOVERY] Red caída durante el volcado de " + nombre + ". Abortando lote.");
-                    break; // Cortamos de raíz si PC3 se fue, sin hacer spam
+                    break; 
                 }
                 
-                // 3. BULK UPDATE: Actualizamos Mongo de 500 en 500 (Velocidad extrema)
+                // Optimizamos las consultas a la base de datos actualizando por bloques de 500 registros
                 if (loteActualizacion.size() >= 500) {
                     coleccion.updateMany(Filters.in("_id", loteActualizacion), Updates.set("sincronizado", true));
                     loteActualizacion.clear();
                 }
             }
             
-            // Guardamos el sobrante que no haya alcanzado a completar 500
+            // Procesamos los últimos registros que quedaron pendientes
             if (!loteActualizacion.isEmpty()) {
                 coleccion.updateMany(Filters.in("_id", loteActualizacion), Updates.set("sincronizado", true));
-            }
-            
-            if (count > 0) {
-                 System.out.println("[RECOVERY] Sincronizados " + count + " registros atrasados de " + nombre);
             }
         }
     }
